@@ -20,6 +20,29 @@ const dishes = [
   { name: 'Wild mushroom pasta', place: 'Rookery', meta: '29 min · 4.8', price: '$18.75', tag: 'Earthy', color: 'sage', image: 'https://images.unsplash.com/photo-1555949258-eb67b1ef0ceb?auto=format&fit=crop&w=1000&q=85' },
 ]
 
+const themes = [
+  { id: 'citrus', name: 'Citrus club', detail: 'Fresh + punchy', swatch: '#ff704c' },
+  { id: 'berry', name: 'Berry dusk', detail: 'Soft + electric', swatch: '#e65375' },
+  { id: 'tide', name: 'Tidal mint', detail: 'Cool + crisp', swatch: '#1c9a9a' },
+]
+
+const ACCOUNT_STORAGE_KEY = 'bite-accounts'
+const SESSION_STORAGE_KEY = 'bite-session'
+
+const hashPassword = async (password) => {
+  const encodedPassword = new TextEncoder().encode(password)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encodedPassword)
+  return Array.from(new Uint8Array(hashBuffer), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+const readAccounts = () => {
+  try {
+    return JSON.parse(window.localStorage.getItem(ACCOUNT_STORAGE_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
 const shuffle = (items) => [...items].sort(() => Math.random() - 0.5)
 
 const getNextDish = (cards) => {
@@ -42,6 +65,12 @@ function App() {
   const [isLaunched, setIsLaunched] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [showAppSplash, setShowAppSplash] = useState(false)
+  const [isAuthenticated, setIsAuthenticated] = useState(() => window.localStorage.getItem(SESSION_STORAGE_KEY) === 'true')
+  const [authMode, setAuthMode] = useState('login')
+  const [authError, setAuthError] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+  const [selectedTheme, setSelectedTheme] = useState('citrus')
+  const [showThemeMenu, setShowThemeMenu] = useState(false)
   const startX = useRef(0)
   const lastTap = useRef(0)
   const locationWatcher = useRef(null)
@@ -109,6 +138,49 @@ function App() {
 
   const removeFromCart = (name) => {
     setCart((items) => items.filter((item) => item.name !== name))
+  }
+
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault()
+    setAuthError('')
+    setAuthBusy(true)
+
+    const formData = new FormData(event.currentTarget)
+    const email = String(formData.get('email') || '').trim().toLowerCase()
+    const password = String(formData.get('password') || '')
+    const accounts = readAccounts()
+
+    try {
+      const passwordHash = await hashPassword(password)
+
+      if (authMode === 'signup') {
+        const name = String(formData.get('name') || '').trim()
+        const confirmPassword = String(formData.get('confirmPassword') || '')
+        if (password !== confirmPassword) {
+          setAuthError('Passwords do not match.')
+          return
+        }
+        if (accounts.some((account) => account.email === email)) {
+          setAuthError('An account already exists for this email.')
+          return
+        }
+        accounts.push({ email, name, passwordHash })
+        window.localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(accounts))
+      } else {
+        const account = accounts.find((storedAccount) => storedAccount.email === email)
+        if (!account || account.passwordHash !== passwordHash) {
+          setAuthError('That email or password is not recognised.')
+          return
+        }
+      }
+
+      window.localStorage.setItem(SESSION_STORAGE_KEY, 'true')
+      setIsAuthenticated(true)
+    } catch {
+      setAuthError('Unable to save your account on this device.')
+    } finally {
+      setAuthBusy(false)
+    }
   }
 
   const placeOrder = () => {
@@ -223,6 +295,32 @@ function App() {
     )
   }
 
+  if (!isAuthenticated) {
+    return (
+      <main className="app-shell auth-shell">
+        <section className="auth-card" aria-label="Bite sign in">
+          <div className="auth-mark">bite<span>.</span></div>
+          <div className="auth-kicker-row"><p className="auth-kicker">A better way to eat</p><span className="auth-status">On this device</span></div>
+          <h1>{authMode === 'login' ? <>Welcome<br /><em>back.</em></> : <>Make room<br /><em>for more.</em></>}</h1>
+          <p className="auth-intro">{authMode === 'login' ? 'Sign in to find your next favorite bite.' : 'Create your Bite account and keep your table close.'}</p>
+          <div className="auth-tabs" role="tablist" aria-label="Account access">
+            <button type="button" role="tab" aria-selected={authMode === 'login'} className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setAuthError('') }}>Log in</button>
+            <button type="button" role="tab" aria-selected={authMode === 'signup'} className={authMode === 'signup' ? 'active' : ''} onClick={() => { setAuthMode('signup'); setAuthError('') }}>Create account</button>
+          </div>
+          <form key={authMode} className="auth-form auth-form-switch" onSubmit={handleAuthSubmit} autoComplete="on">
+            {authMode === 'signup' && <label>First name<input name="name" type="text" autoComplete="given-name" placeholder="Rehan" required /></label>}
+            <label>Email address<input name="email" type="email" autoComplete="username" placeholder="you@example.com" required /></label>
+            <label>Password<input name="password" type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} placeholder="••••••••" minLength="8" required /></label>
+            {authMode === 'signup' && <label>Confirm password<input name="confirmPassword" type="password" autoComplete="new-password" placeholder="••••••••" minLength="8" required /></label>}
+            {authError && <p className="auth-error" role="alert">{authError}</p>}
+            <button type="submit" disabled={authBusy}>{authBusy ? 'Saving your seat...' : authMode === 'login' ? 'Enter Bite' : 'Create my account'} <span>↗</span></button>
+          </form>
+          <small className="auth-footnote">Your table is waiting. Password Manager may ask to save your login.</small>
+        </section>
+      </main>
+    )
+  }
+
   if (!isLaunched) {
     const launchApps = [
       { name: 'Photos', icon: '◔', className: 'mini-one' },
@@ -302,7 +400,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell theme-${selectedTheme}`}>
       {showAppSplash && (
         <div className="bite-app-splash" aria-live="polite">
           <div className="bite-splash-mark">bite<span>.</span></div>
@@ -316,8 +414,23 @@ function App() {
         <header className="topbar">
           <span className="wordmark">bite<span>.</span></span>
           <button className="location" type="button" aria-label="Change location" onClick={requestLocation}>{locationLabel} <span>⌄</span></button>
+          <button className="theme-toggle" type="button" aria-label="Choose a theme" aria-expanded={showThemeMenu} onClick={() => setShowThemeMenu((isOpen) => !isOpen)}>◒</button>
           <button className="avatar" type="button" aria-label="Open profile">A</button>
         </header>
+
+        {showThemeMenu && <div className="theme-menu" role="dialog" aria-label="Choose a theme">
+          <div className="theme-menu-heading"><span>Choose your mood</span><small>Tap to switch</small></div>
+          <div className="theme-options">
+            {themes.map((theme) => <button key={theme.id} type="button" className={`theme-option ${selectedTheme === theme.id ? 'selected' : ''}`} onClick={() => {
+              setSelectedTheme(theme.id)
+              setShowThemeMenu(false)
+            }}>
+              <span className="theme-swatch" style={{ '--swatch': theme.swatch }} />
+              <span><strong>{theme.name}</strong><small>{theme.detail}</small></span>
+              {selectedTheme === theme.id && <b aria-label="Selected theme">✓</b>}
+            </button>)}
+          </div>
+        </div>}
 
         <div className="content">
           {activeTab === 'discover' ? (
